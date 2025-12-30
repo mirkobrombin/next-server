@@ -22,12 +22,14 @@ impl Management for BottlesService {
         request: Request<bottles::CreateBottleRequest>,
     ) -> Result<Response<bottles::Bottle>, Status> {
         let req = request.into_inner();
+        tracing::info!("Received CreateBottle request for: {}", req.name);
         let name = req.name;
         
         let mut state = self.state.write().map_err(|_| Status::internal("Lock error"))?;
         
         // Validation: Check if exists
         if state.bottles.iter().any(|b| b.name == name) {
+            tracing::warn!("Bottle {} already exists", name);
             return Err(Status::already_exists("Bottle already exists"));
         }
 
@@ -44,6 +46,7 @@ impl Management for BottlesService {
         // Save
         state.bottles.push(bottle.clone());
         state.save();
+        tracing::info!("Bottle {} created successfully", name);
 
         // Map to Proto
         Ok(Response::new(bottles::Bottle {
@@ -60,16 +63,19 @@ impl Management for BottlesService {
         request: Request<bottles::DeleteBottleRequest>,
     ) -> Result<Response<bottles::ResultResponse>, Status> {
         let name = request.into_inner().name;
+        tracing::info!("Received DeleteBottle request for: {}", name);
         let mut state = self.state.write().map_err(|_| Status::internal("Lock error"))?;
 
         if let Some(pos) = state.bottles.iter().position(|b| b.name == name) {
             state.bottles.remove(pos);
             state.save();
+            tracing::info!("Bottle {} deleted successfully", name);
             Ok(Response::new(bottles::ResultResponse {
                 success: true,
                 error_message: String::new(),
             }))
         } else {
+            tracing::warn!("Bottle {} not found for deletion", name);
             Err(Status::not_found("Bottle not found"))
         }
     }
@@ -78,15 +84,18 @@ impl Management for BottlesService {
         &self,
         _request: Request<bottles::ListBottlesRequest>,
     ) -> Result<Response<bottles::ListBottlesResponse>, Status> {
+        tracing::info!("Received ListBottles request");
         let state = self.state.read().map_err(|_| Status::internal("Lock error"))?;
         
-        let bottles = state.bottles.iter().map(|b| bottles::Bottle {
+        let bottles: Vec<bottles::Bottle> = state.bottles.iter().map(|b| bottles::Bottle {
             name: b.name.clone(),
             path: b.path.to_string_lossy().to_string(),
             r#type: format!("{:?}", b.kind),
             active: b.active,
             config: None,
         }).collect();
+        
+        tracing::info!("Returning {} bottles", bottles.len());
 
         Ok(Response::new(bottles::ListBottlesResponse { bottles }))
     }
