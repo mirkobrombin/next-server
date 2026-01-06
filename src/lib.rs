@@ -4,6 +4,7 @@ use crate::state::SharedState;
 use tonic::{Request, Response, Status};
 
 pub mod state;
+pub mod orchestrator;
 
 pub struct BottlesService {
     state: SharedState,
@@ -87,12 +88,15 @@ impl Management for BottlesService {
         tracing::info!("Received ListBottles request");
         let state = self.state.read().map_err(|_| Status::internal("Lock error"))?;
         
-        let bottles: Vec<bottles::Bottle> = state.bottles.iter().map(|b| bottles::Bottle {
-            name: b.name.clone(),
-            path: b.path.to_string_lossy().to_string(),
-            r#type: format!("{:?}", b.kind),
-            active: b.active,
-            config: None,
+        let bottles: Vec<bottles::Bottle> = state.bottles.iter().map(|b| {
+            let active = state.orchestrator.is_running(&b.name);
+            bottles::Bottle {
+                name: b.name.clone(),
+                path: b.path.to_string_lossy().to_string(),
+                r#type: format!("{:?}", b.kind),
+                active,
+                config: None,
+            }
         }).collect();
         
         tracing::info!("Returning {} bottles", bottles.len());
@@ -110,34 +114,75 @@ impl Management for BottlesService {
         let bottle = state.bottles.iter().find(|b| b.name == name)
             .ok_or_else(|| Status::not_found("Bottle not found"))?;
 
+        let active = state.orchestrator.is_running(&name);
+
         Ok(Response::new(bottles::Bottle {
             name: bottle.name.clone(),
             path: bottle.path.to_string_lossy().to_string(),
             r#type: format!("{:?}", bottle.kind),
-            active: bottle.active,
+            active,
             config: None,
         }))
     }
 
     async fn start_bottle(
         &self,
-        _request: Request<bottles::BottleRequest>,
+        request: Request<bottles::BottleRequest>,
     ) -> Result<Response<bottles::ResultResponse>, Status> {
-        // TODO: Implement Agent Launching Logic
-        Err(Status::unimplemented("Not implemented yet"))
+        let name = request.into_inner().name;
+        tracing::info!("Starting bottle: {}", name);
+        
+        // TODO: In the future, this method will interact with the Orchestrator to:
+        // 1. Resolve the correct Runner via Component Manager.
+        // 2. Launch the Agent process.
+        // 3. Establish gRPC connection with the Agent.
+        //
+        // Currently, it updates the internal state to simulate a running bottle
+        // for protocol verification.
+        
+        let state = self.state.read().map_err(|_| Status::internal("Lock error"))?;
+        // Check existence
+        if !state.bottles.iter().any(|b| b.name == name) {
+            return Err(Status::not_found("Bottle not found"));
+        }
+        
+        state.orchestrator.start_bottle(name.clone())
+            .map_err(|e| Status::internal(e))?;
+            
+        tracing::info!("Bottle {} started (simulated)", name);
+
+        Ok(Response::new(bottles::ResultResponse {
+            success: true,
+            error_message: String::new(),
+        }))
     }
 
     async fn stop_bottle(
         &self,
-        _request: Request<bottles::BottleRequest>,
+        request: Request<bottles::BottleRequest>,
     ) -> Result<Response<bottles::ResultResponse>, Status> {
-        Err(Status::unimplemented("Not implemented yet"))
+        let name = request.into_inner().name;
+        tracing::info!("Stopping bottle: {}", name);
+
+        let state = self.state.read().map_err(|_| Status::internal("Lock error"))?;
+        state.orchestrator.stop_bottle(&name)
+            .map_err(|e| Status::internal(e))?;
+
+        Ok(Response::new(bottles::ResultResponse {
+            success: true,
+            error_message: String::new(),
+        }))
     }
 
     async fn restart_bottle(
         &self,
-        _request: Request<bottles::BottleRequest>,
+        request: Request<bottles::BottleRequest>,
     ) -> Result<Response<bottles::ResultResponse>, Status> {
-        Err(Status::unimplemented("Not implemented yet"))
+        let req = request.into_inner();
+        let stop_req = Request::new(bottles::BottleRequest { name: req.name.clone() });
+        let _ = self.stop_bottle(stop_req).await;
+        
+        let start_req = Request::new(bottles::BottleRequest { name: req.name });
+        self.start_bottle(start_req).await
     }
 }

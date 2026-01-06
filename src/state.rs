@@ -2,10 +2,12 @@ use bottles_core::bottle::Bottle;
 use bottles_core::persistence::Persistence;
 use std::sync::{Arc, RwLock};
 use std::path::PathBuf;
+use crate::orchestrator::Orchestrator;
 
 pub struct AppState {
     pub bottles: Vec<Bottle>,
     pub persistence: Persistence,
+    pub orchestrator: Orchestrator,
 }
 
 impl AppState {
@@ -15,10 +17,12 @@ impl AppState {
             tracing::error!("Failed to load bottles: {}", e);
             Vec::new()
         });
+        let orchestrator = Orchestrator::new();
 
         Self {
             bottles,
             persistence,
+            orchestrator,
         }
     }
 
